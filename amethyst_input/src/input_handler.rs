@@ -6,8 +6,8 @@ use super::{
     scroll_direction::ScrollDirection,
     *,
 };
-use amethyst_core::shrev::EventChannel;
 use derivative::Derivative;
+use shrev::EventChannel;
 use smallvec::SmallVec;
 use std::{borrow::Borrow, hash::Hash};
 use winit::{

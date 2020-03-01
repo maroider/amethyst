@@ -1,19 +1,15 @@
+#[cfg(feature = "amethyst")]
+pub use self::system::SdlEventsSystem;
+
 use std::{fmt, marker::PhantomData, path::PathBuf};
 
-use derivative::Derivative;
-use derive_new::new;
 use sdl2::{
     self,
     controller::{AddMappingError, Axis, Button, GameController},
     event::Event,
     EventPump, GameControllerSubsystem, Sdl,
 };
-
-use amethyst_core::{
-    ecs::prelude::{System, SystemData, World, Write},
-    shrev::EventChannel,
-    SystemDesc,
-};
+use shrev::EventChannel;
 
 use super::{
     controller::{ControllerAxis, ControllerButton, ControllerEvent},
@@ -54,32 +50,8 @@ pub enum ControllerMappings {
     FromString(String),
 }
 
-/// Builds a `SdlEventsSystem`.
-#[derive(Derivative, Debug, new)]
-#[derivative(Default(bound = ""))]
-pub struct SdlEventsSystemDesc<T>
-where
-    T: BindingTypes,
-{
-    mappings: Option<ControllerMappings>,
-    marker: PhantomData<T>,
-}
-
-impl<'a, 'b, T> SystemDesc<'a, 'b, SdlEventsSystem<T>> for SdlEventsSystemDesc<T>
-where
-    T: BindingTypes,
-{
-    fn build(self, world: &mut World) -> SdlEventsSystem<T> {
-        <SdlEventsSystem<T> as System<'_>>::SystemData::setup(world);
-
-        SdlEventsSystem::new(world, self.mappings)
-            .unwrap_or_else(|e| panic!("Failed to build SdlEventsSystem. Error: {}", e))
-    }
-}
-
-/// A system that pumps SDL events into the `amethyst_input` APIs.
 #[allow(missing_debug_implementations)]
-pub struct SdlEventsSystem<T: BindingTypes> {
+pub struct SdlEventHandler<T: BindingTypes> {
     #[allow(dead_code)]
     sdl_context: Sdl,
     event_pump: Option<EventPump>,
@@ -89,31 +61,9 @@ pub struct SdlEventsSystem<T: BindingTypes> {
     marker: PhantomData<T>,
 }
 
-type SdlEventsData<'a, T> = (
-    Write<'a, InputHandler<T>>,
-    Write<'a, EventChannel<InputEvent<T>>>,
-);
-
-impl<'a, T: BindingTypes> System<'a> for SdlEventsSystem<T> {
-    type SystemData = SdlEventsData<'a, T>;
-
-    fn run(&mut self, (mut handler, mut output): Self::SystemData) {
-        let mut event_pump = self
-            .event_pump
-            .take()
-            .expect("Unreachable: `event_pump` is always reinserted after `take`");
-        for event in event_pump.poll_iter() {
-            // handle appropriate events locally
-            self.handle_sdl_event(&event, &mut handler, &mut output);
-        }
-        self.event_pump = Some(event_pump);
-    }
-}
-
-impl<T: BindingTypes> SdlEventsSystem<T> {
-    /// Creates a new instance of this system with the provided controller mappings.
-    pub fn new(
-        world: &mut World,
+impl<T: BindingTypes> SdlEventHandler<T> {
+    pub fn new<'a>(
+        init_controllers: impl FnOnce(&mut Self),
         mappings: Option<ControllerMappings>,
     ) -> Result<Self, SdlSystemError> {
         let sdl_context = sdl2::init().map_err(SdlSystemError::ContextInit)?;
@@ -139,17 +89,27 @@ impl<T: BindingTypes> SdlEventsSystem<T> {
             None => {}
         };
 
-        SdlEventsData::<T>::setup(world);
-        let mut sys = SdlEventsSystem {
+        let mut sdl_handler = Self {
             sdl_context,
             event_pump: Some(event_pump),
             controller_subsystem,
             opened_controllers: vec![],
             marker: PhantomData,
         };
-        let (mut handler, mut output) = SdlEventsData::fetch(world);
-        sys.initialize_controllers(&mut handler, &mut output);
-        Ok(sys)
+        init_controllers(&mut sdl_handler);
+        Ok(sdl_handler)
+    }
+
+    pub fn run(&mut self, handler: &mut InputHandler<T>, output: &mut EventChannel<InputEvent<T>>) {
+        let mut event_pump = self
+            .event_pump
+            .take()
+            .expect("Unreachable: `event_pump` is always reinserted after `take`");
+        for event in event_pump.poll_iter() {
+            // handle appropriate events locally
+            self.handle_sdl_event(&event, handler, output);
+        }
+        self.event_pump = Some(event_pump);
     }
 
     fn handle_sdl_event(
@@ -235,7 +195,7 @@ impl<T: BindingTypes> SdlEventsSystem<T> {
         }
     }
 
-    fn initialize_controllers(
+    pub fn initialize_controllers(
         &mut self,
         handler: &mut InputHandler<T>,
         output: &mut EventChannel<InputEvent<T>>,
@@ -283,6 +243,83 @@ impl From<Axis> for ControllerAxis {
             Axis::RightY => ControllerAxis::RightY,
             Axis::TriggerLeft => ControllerAxis::LeftTrigger,
             Axis::TriggerRight => ControllerAxis::RightTrigger,
+        }
+    }
+}
+
+#[cfg(feature = "amethyst")]
+mod system {
+    use std::marker::PhantomData;
+
+    use derivative::Derivative;
+    use derive_new::new;
+    use shrev::EventChannel;
+
+    use amethyst_core::{
+        ecs::prelude::{System, SystemData, World, Write},
+        SystemDesc,
+    };
+
+    use super::super::{BindingTypes, InputEvent, InputHandler};
+    use super::{ControllerMappings, SdlEventHandler, SdlSystemError};
+
+    /// Builds a `SdlEventsSystem`.
+    #[derive(Derivative, Debug, new)]
+    #[derivative(Default(bound = ""))]
+    pub struct SdlEventsSystemDesc<T>
+    where
+        T: BindingTypes,
+    {
+        mappings: Option<ControllerMappings>,
+        marker: PhantomData<T>,
+    }
+
+    impl<'a, 'b, T> SystemDesc<'a, 'b, SdlEventsSystem<T>> for SdlEventsSystemDesc<T>
+    where
+        T: BindingTypes,
+    {
+        fn build(self, world: &mut World) -> SdlEventsSystem<T> {
+            <SdlEventsSystem<T> as System<'_>>::SystemData::setup(world);
+
+            SdlEventsSystem::new(world, self.mappings)
+                .unwrap_or_else(|e| panic!("Failed to build SdlEventsSystem. Error: {}", e))
+        }
+    }
+
+    /// A system that pumps SDL events into the `amethyst_input` APIs.
+    #[allow(missing_debug_implementations)]
+    pub struct SdlEventsSystem<T: BindingTypes> {
+        event_handler: SdlEventHandler<T>,
+    }
+
+    type SdlEventsData<'a, T> = (
+        Write<'a, InputHandler<T>>,
+        Write<'a, EventChannel<InputEvent<T>>>,
+    );
+
+    impl<'a, T: BindingTypes> System<'a> for SdlEventsSystem<T> {
+        type SystemData = SdlEventsData<'a, T>;
+
+        fn run(&mut self, (mut handler, mut output): Self::SystemData) {
+            self.event_handler.run(&mut handler, &mut output);
+        }
+    }
+
+    impl<T: BindingTypes> SdlEventsSystem<T> {
+        /// Creates a new instance of this system with the provided controller mappings.
+        pub fn new(
+            world: &mut World,
+            mappings: Option<ControllerMappings>,
+        ) -> Result<Self, SdlSystemError> {
+            let event_handler = SdlEventHandler::new(
+                |sdl_handler| {
+                    SdlEventsData::<T>::setup(world);
+                    let (mut handler, mut output) = SdlEventsData::fetch(world);
+                    sdl_handler.initialize_controllers(&mut handler, &mut output);
+                },
+                mappings,
+            )?;
+            Ok(Self { event_handler })
         }
     }
 }
