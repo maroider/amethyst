@@ -30,7 +30,7 @@ pub use self::{
     bundle::{BindingsFileError, InputBundle},
     system::{InputSystem, InputSystemDesc},
 };
-pub use winit::{ElementState, VirtualKeyCode};
+pub use winit::event::{ElementState, VirtualKeyCode};
 
 use std::iter::Iterator;
 

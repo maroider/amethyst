@@ -1,6 +1,6 @@
 use derivative::Derivative;
 use serde::{Deserialize, Serialize};
-use winit::{MouseButton, VirtualKeyCode};
+use winit::event::{MouseButton, VirtualKeyCode};
 
 use super::{
     bindings::BindingTypes,
@@ -46,9 +46,9 @@ where
     /// The mouse pointer moved on screen
     CursorMoved {
         /// The amount the cursor moved horizontally in pixels.
-        delta_x: f32,
+        delta_x: f64,
         /// The amount the cursor moved vertically in pixels.
-        delta_y: f32,
+        delta_y: f64,
     },
     /// The mouse device moved. Use this for any use of the mouse that doesn't involve a standard
     /// mouse pointer.
@@ -67,7 +67,7 @@ where
         /// The axis that moved on the controller.
         axis: T::Axis,
         /// The amount that the axis moved.
-        value: f32,
+        value: f64,
     },
     /// A controller Axis was moved.
     ///

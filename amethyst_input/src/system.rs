@@ -1,17 +1,16 @@
 //! Input system
 use derive_new::new;
-use winit::Event;
+use winit::event::Event;
 
 use crate::{BindingTypes, Bindings, InputEvent, InputHandler};
 use amethyst_core::{
     ecs::{
-        prelude::{Read, ReadExpect, System, World, Write},
+        prelude::{Read, System, World, Write},
         SystemData,
     },
     shrev::{EventChannel, ReaderId},
     SystemDesc,
 };
-use amethyst_window::ScreenDimensions;
 
 #[cfg(feature = "profiler")]
 use thread_profiler::profile_scope;
@@ -32,7 +31,9 @@ where
     fn build(self, world: &mut World) -> InputSystem<T> {
         <InputSystem<T> as System<'_>>::SystemData::setup(world);
 
-        let reader = world.fetch_mut::<EventChannel<Event>>().register_reader();
+        let reader = world
+            .fetch_mut::<EventChannel<Event<'static, ()>>>()
+            .register_reader();
         if let Some(bindings) = self.bindings.as_ref() {
             world.fetch_mut::<InputHandler<T>>().bindings = bindings.clone();
         }
@@ -50,46 +51,39 @@ pub struct InputSystem<T>
 where
     T: BindingTypes,
 {
-    reader: ReaderId<Event>,
+    reader: ReaderId<Event<'static, ()>>,
     bindings: Option<Bindings<T>>,
 }
 
 impl<T: BindingTypes> InputSystem<T> {
     /// Create a new input system. Needs a reader id for `EventHandler<winit::Event>`.
-    pub fn new(reader: ReaderId<Event>, bindings: Option<Bindings<T>>) -> Self {
+    pub fn new(reader: ReaderId<Event<'static, ()>>, bindings: Option<Bindings<T>>) -> Self {
         InputSystem { reader, bindings }
     }
 
     fn process_event(
-        event: &Event,
+        event: &Event<'_, ()>,
         handler: &mut InputHandler<T>,
         output: &mut EventChannel<InputEvent<T>>,
-        hidpi: f32,
     ) {
-        handler.send_event(event, output, hidpi as f32);
+        handler.send_event(event, output);
     }
 }
 
 impl<'a, T: BindingTypes> System<'a> for InputSystem<T> {
     type SystemData = (
-        Read<'a, EventChannel<Event>>,
+        Read<'a, EventChannel<Event<'static, ()>>>,
         Write<'a, InputHandler<T>>,
         Write<'a, EventChannel<InputEvent<T>>>,
-        ReadExpect<'a, ScreenDimensions>,
     );
 
-    fn run(&mut self, (input, mut handler, mut output, screen_dimensions): Self::SystemData) {
+    fn run(&mut self, (input, mut handler, mut output): Self::SystemData) {
         #[cfg(feature = "profiler")]
         profile_scope!("input_system");
 
         handler.send_frame_begin();
         for event in input.read(&mut self.reader) {
-            Self::process_event(
-                event,
-                &mut *handler,
-                &mut *output,
-                screen_dimensions.hidpi_factor() as f32,
-            );
+            Self::process_event(event, &mut *handler, &mut *output);
         }
     }
 }
